@@ -46,6 +46,10 @@ EXFILTRATION_REGEX = [
     # SCADA / ICS telemetry exfiltration (SEC-I-04)
     re.compile(r"(?:hex\s+registers|0x4[0-9A-Fa-f]{3}|SCADA\s+telemetry)", re.IGNORECASE),
     re.compile(r"(?:dump|read|extract|output)\s+(?:the\s+)?(?:raw\s+)?(?:hex|register|modbus|SCADA|PLC|RTU)", re.IGNORECASE),
+    # PII bulk exfiltration (SEC-I-04): requesting employee rosters, Aadhaar, phone numbers, addresses
+    re.compile(r"(?:list|give|show|provide|display|extract)\s+(?:me\s+)?(?:all\s+)?(?:the\s+)?(?:employee|staff|worker|personnel)\s+(?:names?|details?|records?|data|info|information|directory)", re.IGNORECASE),
+    re.compile(r"(?:list|give|show|provide|extract)\s+(?:me\s+)?(?:all\s+)?(?:the\s+)?(?:phone\s+numbers?|aadhaar|aadhar|mobile\s+numbers?|contact\s+details?|home\s+address)", re.IGNORECASE),
+    re.compile(r"(?:all|every|complete|full)\s+(?:the\s+)?(?:employee|staff|personnel).*?(?:aadhaar|phone|mobile|address|contact|PII|personal)", re.IGNORECASE),
 ]
 
 # Regex patterns for encoding/obfuscation attacks (SEC-I-06)

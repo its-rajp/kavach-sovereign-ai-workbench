@@ -6,6 +6,7 @@ Implements SEC-R-03 (Untrusted Document Wrapping) and SEC-O-04 (Anti-Dump Length
 - Formats provenance citations [source, page]
 """
 
+import re
 from typing import List, Dict, Any, Optional, Literal, Union
 from pydantic import BaseModel, Field
 from .retriever import Retriever, get_retriever
@@ -115,7 +116,7 @@ class RAGChain:
             print(f"   [{idx+1}] Source: {src} | Page: {pg} | Rank: {rk} | Length: {len(c.get('text', ''))} chars")
             print(f"       Preview: {txt_preview}...")
 
-        # 2. Format Context & Citations
+        # 2. Format Context & Citations (with text cleaning to prevent raw PDF dumping)
         context_snippets = []
         citations: List[Citation] = []
         seen_chunks = set()
@@ -126,8 +127,14 @@ class RAGChain:
             page = meta.get("page", 1)
             chunk_id = c.get("chunk_id", f"{source}_p{page}")
 
-            clean_chunk_text = c.get("text", "").strip()
-            context_snippets.append(f"[Document: {source} (Page {page})]\n{clean_chunk_text}")
+            raw_text = c.get("text", "").strip()
+            # Clean chunk text: collapse whitespace, strip classification headers and PDF metadata
+            clean_chunk_text = re.sub(r'\s+', ' ', raw_text).strip()
+            clean_chunk_text = re.sub(r'\[(?:RESTRICTED|CONFIDENTIAL|INTERNAL|SECRET|PUBLIC)\s*//.*?\]', '', clean_chunk_text, flags=re.IGNORECASE).strip()
+            clean_chunk_text = re.sub(r'(?:MRPL\s+Technical\s+Manual\s*•.*?Page\s+\d+\s+of\s+\d+)', '', clean_chunk_text, flags=re.IGNORECASE).strip()
+
+            if clean_chunk_text:
+                context_snippets.append(f"[Source: {source}, Page {page}]\n{clean_chunk_text}")
 
             if chunk_id not in seen_chunks:
                 seen_chunks.add(chunk_id)
@@ -142,13 +149,21 @@ class RAGChain:
         # Debug: Print the context to the terminal to verify it's not empty
         print(f"DEBUG CONTEXT INJECTED:\n{context_text}")
 
-        # 3. Construct prompt using required sovereign template
+        # 3. Construct prompt using strict sovereign extraction template
         augmented_question = question
         if conversation_history:
             augmented_question = f"Previous context:\n{conversation_history}\n\nCurrent Question: {question}"
 
-        prompt = f"""You are Kavach, a secure AI assistant for MRPL. Answer the user's question using ONLY the provided context.
-If the context does not contain the answer, state: 'I do not have sufficient authorized information.'
+        prompt = f"""You are Kavach, a secure AI assistant for MRPL Sovereign AI Workbench.
+Your task is to answer the user's question using ONLY the provided context.
+
+STRICT RULES:
+1. Answer concisely and professionally. Do NOT dump raw text, headers, or page numbers from the context.
+2. If the context contains the answer, extract the specific value (e.g., temperature, interval, capacity) and state it clearly in 1-3 sentences.
+3. If the context does NOT contain the answer, respond EXACTLY with: "I do not have sufficient authorized information in the provided documentation to answer this question."
+4. Do NOT mention "Based on the context" or "According to the document". Just state the answer directly.
+5. Do NOT reproduce classification headers, document footers, or raw table formatting.
+6. At the end of your answer, cite sources in this format: [Source: Filename, Page X].
 
 --- CONTEXT START ---
 {context_text}
@@ -158,7 +173,7 @@ User Question: {augmented_question}
 
 Answer:"""
 
-        print(f"\n📝 [PROMPT INJECTED TO OLLAMA]:\n{prompt[:350]}...\n[Total Prompt Chars: {len(prompt)}]\n")
+        print(f"\n📝 [PROMPT INJECTED TO OLLAMA]:\n{prompt[:500]}...\n[Total Prompt Chars: {len(prompt)}]\n")
 
         # 4. Generate via LLM (Ollama qwen2.5:3b)
         raw_answer = self.llm.generate(prompt=prompt)
