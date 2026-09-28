@@ -1,0 +1,30 @@
+# Kavach (SIH26117) System Configuration
+# Declarative runtime settings (editable without touching source code - NFR-08)
+
+# Model configuration
+llm_model: "qwen2.5:3b"        # Options: qwen2.5:3b (low-RAM), llama3:8b (best), phi3:mini
+embed_model: "nomic-embed-text"
+ollama_base_url: "http://localhost:11434"
+request_timeout_seconds: 90
+
+# Ingestion & Chunking
+chunk_size: 800
+chunk_overlap: 120
+
+# Retrieval parameters
+top_k: 5
+similarity_threshold: 0.25
+
+# Storage paths
+vectorstore_dir: "data/vectorstore"
+raw_docs_dir: "data/raw"
+audit_log_path: "logs/audit.jsonl"
+audit_db_path: "logs/audit.db"
+
+# Security & Defenses
+max_answer_chars: 1500          # Bounded output ceiling to prevent bulk exfiltration
+allow_network: false            # Sovereignty enforcement (NFR-01)
+fail_closed: true               # Deny turn on any security error (NFR-05)
+
+# Conversational Memory
+memory_window_turns: 6

@@ -1,0 +1,13 @@
+# Colang Policy: Output Screening, Redaction & Grounding (SEC-O-01 to SEC-O-05)
+
+define bot leak confidential
+  "system prompt:"
+  "INTERNAL CONFIDENTIAL RULE"
+  "ROOT_KEY"
+
+define bot refuse leak
+  "🚨 Security Alert: Response withheld by output security rail (Rule SEC-O-03) to prevent unauthorized policy disclosure."
+
+define flow guard output leak
+  bot leak confidential
+  bot refuse leak

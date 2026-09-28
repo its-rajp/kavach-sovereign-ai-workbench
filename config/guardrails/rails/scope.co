@@ -1,0 +1,15 @@
+# Colang Policy: Scope Enforcement (SEC-I-05, SR-05)
+
+define user ask out of scope
+  "write a poem about love"
+  "who won the world cup"
+  "how do I make a bomb"
+  "what is the weather in Paris"
+  "help me write a python game"
+
+define bot refuse out of scope
+  "Notice: This inquiry falls outside the operational mandate of Kavach (Rule SEC-I-05). I am an on-premise workbench restricted to authorized industrial engineering and safety documentation."
+
+define flow guard scope
+  user ask out of scope
+  bot refuse out of scope

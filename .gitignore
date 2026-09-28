@@ -1,0 +1,111 @@
+# Python byte-code / cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Packaging / Distribution
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.tar.gz
+*.whl
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.tox/
+
+# Environment Variables & Secrets (CRITICAL)
+.env
+.env.*
+!.env.example
+secrets.toml
+*.pem
+*.key
+*.cert
+*.crt
+
+# Kavach Sovereign Data & Enclave Artifacts (CONFIDENTIAL - NEVER COMMIT)
+data/raw/*
+!data/raw/.gitkeep
+data/vectorstore/*
+!data/vectorstore/.gitkeep
+data/sample_docs/*
+!data/sample_docs/.gitkeep
+*.parquet
+*.h5
+
+# Logs & Audit Ledgers
+logs/*
+!logs/.gitkeep
+*.log
+
+# Streamlit Runtime & Cache
+.streamlit/*.toml
+!.streamlit/config.toml
+
+# IDE, Editors & OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.project
+.pydevproject
+.settings/
+
+# Agent / AI Tool Artifacts & Scratch
+.agents/
+.claude/
+.claude.json
+.antigravity/
+.antigravity-ide/
+
+# Temporary, Archive & Design Dumps
+*.zip
+*.tar
+*.gz
+stitch_kavach_sovereign_ai_dashboard*/
+tempCodeRunnerFile*
+*.tmp
+*.bak
+*.swp
+*~
+
+# Markdown files (excluding README.md)
+*.md
+!README.md

@@ -1,0 +1,23 @@
+# NeMo Guardrails Configuration — Kavach
+# Declarative Security Rails Policy (SR-01 to SR-10)
+
+models:
+  - type: main
+    engine: ollama
+    model: qwen2.5:3b
+    parameters:
+      temperature: 0.1
+
+rails:
+  input:
+    flows:
+      - guard injection
+      - guard jailbreak
+      - guard exfiltration
+      - guard disclosure
+      - guard scope
+  output:
+    flows:
+      - guard output leak
+      - guard output length
+      - guard output grounding
