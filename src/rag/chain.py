@@ -128,10 +128,24 @@ class RAGChain:
             chunk_id = c.get("chunk_id", f"{source}_p{page}")
 
             raw_text = c.get("text", "").strip()
-            # Clean chunk text: collapse whitespace, strip classification headers and PDF metadata
-            clean_chunk_text = re.sub(r'\s+', ' ', raw_text).strip()
-            clean_chunk_text = re.sub(r'\[(?:RESTRICTED|CONFIDENTIAL|INTERNAL|SECRET|PUBLIC)\s*//.*?\]', '', clean_chunk_text, flags=re.IGNORECASE).strip()
-            clean_chunk_text = re.sub(r'(?:MRPL\s+Technical\s+Manual\s*•.*?Page\s+\d+\s+of\s+\d+)', '', clean_chunk_text, flags=re.IGNORECASE).strip()
+            # Clean chunk text: aggressive stripping of PDF artifacts that confuse qwen2.5:3b
+            clean_chunk_text = raw_text
+            # 1. Remove markdown table artifacts ( | | patterns )
+            clean_chunk_text = re.sub(r'\|\s*\|', ' ', clean_chunk_text)
+            clean_chunk_text = re.sub(r'\|', ' ', clean_chunk_text)
+            # 2. Remove classification stamps like [RESTRICTED // CLR-02 // ANALYST ACCESS]
+            clean_chunk_text = re.sub(r'\[(?:RESTRICTED|CONFIDENTIAL|INTERNAL|SECRET|PUBLIC)\s*//.*?\]', '', clean_chunk_text, flags=re.IGNORECASE)
+            # 3. Remove PDF page references and footer/header artifacts
+            clean_chunk_text = re.sub(r'pdf,?\s*Page\s*\d+\]', '', clean_chunk_text, flags=re.IGNORECASE)
+            clean_chunk_text = re.sub(r'MRPL\s+Technical\s+Manual\s*[•·].*?Page\s+\d+\s+of\s+\d+', '', clean_chunk_text, flags=re.IGNORECASE)
+            clean_chunk_text = re.sub(r'Ref:\s*MRPL/[A-Z/]+/\d+/\d+', '', clean_chunk_text, flags=re.IGNORECASE)
+            # 4. Remove raw section numbering that distracts the model (e.g. "0 PURPOSE AND OPERATIONAL SCOPE", "1.0 GENERAL")
+            clean_chunk_text = re.sub(r'(?:^|\s)\d+\.?\d*\s+(?=[A-Z]{2,})', ' ', clean_chunk_text)
+            # 5. Remove "Classification: Confidential / Restricted" and "Target Facility:" boilerplate
+            clean_chunk_text = re.sub(r'Classification:\s*\w+\s*/\s*\w+', '', clean_chunk_text, flags=re.IGNORECASE)
+            clean_chunk_text = re.sub(r'Target\s+Facility:\s*MRPL\s+Phase\s+III\s+Complex', '', clean_chunk_text, flags=re.IGNORECASE)
+            # 6. Collapse all multi-whitespace into single spaces
+            clean_chunk_text = re.sub(r'\s+', ' ', clean_chunk_text).strip()
 
             if clean_chunk_text:
                 context_snippets.append(f"[Source: {source}, Page {page}]\n{clean_chunk_text}")
