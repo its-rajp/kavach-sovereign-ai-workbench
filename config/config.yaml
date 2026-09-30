@@ -13,7 +13,7 @@ chunk_overlap: 120
 
 # Retrieval parameters
 top_k: 3
-similarity_threshold: 0.40
+similarity_threshold: 0.28
 
 # Storage paths
 vectorstore_dir: "data/vectorstore"

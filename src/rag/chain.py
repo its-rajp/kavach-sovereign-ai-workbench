@@ -160,9 +160,6 @@ class RAGChain:
 
         context_text = "\n\n".join(context_snippets)
 
-        # Debug: Print the context to the terminal to verify it's not empty
-        print(f"DEBUG CONTEXT INJECTED:\n{context_text}")
-
         # 3. Construct prompt using strict sovereign extraction template
         augmented_question = question
         if conversation_history:
@@ -187,6 +184,9 @@ User Question: {augmented_question}
 
 Answer:"""
 
+        # Debug: Print the context and prompt to the terminal to verify injection
+        print(f"DEBUG CONTEXT LENGTH: {len(context_text)} characters")
+        print(f"DEBUG PROMPT SNIPPET: {prompt[:200]}...")
         print(f"\n📝 [PROMPT INJECTED TO OLLAMA]:\n{prompt[:500]}...\n[Total Prompt Chars: {len(prompt)}]\n")
 
         # 4. Generate via LLM (Ollama qwen2.5:3b)

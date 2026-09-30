@@ -1364,14 +1364,17 @@ with tab_terminal:
                 st.rerun()
 
             # 3. Standard RAG query through Guardrails Engine
-            # Debug: Verify retrieved chunks for current query directly in terminal
+            # Debug: Verify retrieved chunks for current query directly in terminal (Varahamihira Telemetry)
             try:
-                dbg_chunks = engine.rag_chain.retriever.retrieve(user_input, role=clearance_level.lower(), top_k=5)
-                dbg_context = "\n\n".join([f"[{c.get('metadata', {}).get('source')} Page {c.get('metadata', {}).get('page')}] {c.get('text', '')}" for c in dbg_chunks])
-                print(f"\n🔍 [STREAMLIT RAG RETRIEVAL DEBUG] Query: '{user_input}' (Role: {clearance_level}, Rank: {clearance_rank})")
-                print(f"DEBUG CONTEXT INJECTED:\n{dbg_context}\n")
+                rank_map = {"OPERATOR": 1, "ANALYST": 2, "COMMANDER": 3}
+                current_rank = rank_map.get(st.session_state.clearance_level, clearance_rank)
+                retrieved_docs = engine.rag_chain.retriever.retrieve(user_input, role=clearance_level.lower(), top_k=3)
+                print(f"DEBUG RETRIEVAL: Found {len(retrieved_docs)} chunks for rank {current_rank}")
+                for i, doc in enumerate(retrieved_docs):
+                    txt_preview = doc.get("text", "")[:100].replace("\n", " ")
+                    print(f"DEBUG CHUNK {i}: {txt_preview}...")
             except Exception as _dbg_err:
-                print(f"Debug retrieval note: {_dbg_err}")
+                print(f"DEBUG RETRIEVAL ERROR: {_dbg_err}")
 
             with st.spinner(f"Processing query through Sovereign Guardrails ({clearance_level} Rank {clearance_rank} Enclave)..."):
                 response = engine.generate(
