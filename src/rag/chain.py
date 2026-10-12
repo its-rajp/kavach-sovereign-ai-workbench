@@ -62,6 +62,31 @@ USER QUESTION:
 """
 
 
+def clean_chunk_text(text: str) -> str:
+    """Aggressive context sanitizer: removes all PDF page headers, footers, stamps, and markdown table artifacts."""
+    if not text:
+        return ""
+    # Remove specific PDF artifacts seen in logs
+    text = re.sub(r'\[?\s*(?:Source:)?\s*[^\]\n]*\.pdf,?\s*Page\s*\d+\s*\]?', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'pdf,?\s*Page\s*\d+\]?', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'MRPL Technical Manual • Confidential Page \d+ of \d+', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'MRPL_DAILY_SHIFT_LOG_\d+\.pdf', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\|\s*', ' ', text)  # Remove markdown pipes
+    text = re.sub(r'^\s*[-=]+\s*$', '', text, flags=re.MULTILINE)  # Remove separator lines
+    # Remove classification stamps like [RESTRICTED // CLR-02 // ANALYST ACCESS]
+    text = re.sub(r'\[(?:RESTRICTED|CONFIDENTIAL|INTERNAL|SECRET|PUBLIC|TOP SECRET)\s*//.*?\]', '', text, flags=re.IGNORECASE)
+    # Remove document headers and metadata boilerplate
+    text = re.sub(r'MRPL\s+REFINERY\s+SAFETY\s+OPERATIONS\s+\d+.*?Directorate', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'Ref:\s*MRPL/[A-Z/]+/\d+/\d+', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'Classification:\s*\w+\s*/\s*\w+', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'Target\s+Facility:\s*MRPL\s+Phase\s+III\s+Complex', '', text, flags=re.IGNORECASE)
+    # Remove leading brackets or dashes
+    text = re.sub(r'^[\]\)\s\-]+', '', text)
+    # Collapse whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+
 class RAGChain:
     """Orchestrates retrieval and grounded generation."""
 
@@ -116,7 +141,7 @@ class RAGChain:
             print(f"   [{idx+1}] Source: {src} | Page: {pg} | Rank: {rk} | Length: {len(c.get('text', ''))} chars")
             print(f"       Preview: {txt_preview}...")
 
-        # 2. Format Context & Citations (with text cleaning to prevent raw PDF dumping)
+        # 2. Format Context & Citations (with aggressive text cleaning to prevent raw PDF dumping)
         context_snippets = []
         citations: List[Citation] = []
         seen_chunks = set()
@@ -128,27 +153,10 @@ class RAGChain:
             chunk_id = c.get("chunk_id", f"{source}_p{page}")
 
             raw_text = c.get("text", "").strip()
-            # Clean chunk text: aggressive stripping of PDF artifacts that confuse qwen2.5:3b
-            clean_chunk_text = raw_text
-            # 1. Remove markdown table artifacts ( | | patterns )
-            clean_chunk_text = re.sub(r'\|\s*\|', ' ', clean_chunk_text)
-            clean_chunk_text = re.sub(r'\|', ' ', clean_chunk_text)
-            # 2. Remove classification stamps like [RESTRICTED // CLR-02 // ANALYST ACCESS]
-            clean_chunk_text = re.sub(r'\[(?:RESTRICTED|CONFIDENTIAL|INTERNAL|SECRET|PUBLIC)\s*//.*?\]', '', clean_chunk_text, flags=re.IGNORECASE)
-            # 3. Remove PDF page references and footer/header artifacts
-            clean_chunk_text = re.sub(r'pdf,?\s*Page\s*\d+\]', '', clean_chunk_text, flags=re.IGNORECASE)
-            clean_chunk_text = re.sub(r'MRPL\s+Technical\s+Manual\s*[•·].*?Page\s+\d+\s+of\s+\d+', '', clean_chunk_text, flags=re.IGNORECASE)
-            clean_chunk_text = re.sub(r'Ref:\s*MRPL/[A-Z/]+/\d+/\d+', '', clean_chunk_text, flags=re.IGNORECASE)
-            # 4. Remove raw section numbering that distracts the model (e.g. "0 PURPOSE AND OPERATIONAL SCOPE", "1.0 GENERAL")
-            clean_chunk_text = re.sub(r'(?:^|\s)\d+\.?\d*\s+(?=[A-Z]{2,})', ' ', clean_chunk_text)
-            # 5. Remove "Classification: Confidential / Restricted" and "Target Facility:" boilerplate
-            clean_chunk_text = re.sub(r'Classification:\s*\w+\s*/\s*\w+', '', clean_chunk_text, flags=re.IGNORECASE)
-            clean_chunk_text = re.sub(r'Target\s+Facility:\s*MRPL\s+Phase\s+III\s+Complex', '', clean_chunk_text, flags=re.IGNORECASE)
-            # 6. Collapse all multi-whitespace into single spaces
-            clean_chunk_text = re.sub(r'\s+', ' ', clean_chunk_text).strip()
+            clean_text = clean_chunk_text(raw_text)
 
-            if clean_chunk_text:
-                context_snippets.append(f"[Source: {source}, Page {page}]\n{clean_chunk_text}")
+            if clean_text:
+                context_snippets.append(clean_text)
 
             if chunk_id not in seen_chunks:
                 seen_chunks.add(chunk_id)
@@ -160,28 +168,26 @@ class RAGChain:
 
         context_text = "\n\n".join(context_snippets)
 
-        # 3. Construct prompt using strict sovereign extraction template
+        # 3. Construct prompt using strict sovereign extraction template (FIX 2)
         augmented_question = question
         if conversation_history:
             augmented_question = f"Previous context:\n{conversation_history}\n\nCurrent Question: {question}"
 
-        prompt = f"""You are Kavach, a secure AI assistant for MRPL Sovereign AI Workbench.
-Your task is to answer the user's question using ONLY the provided context.
+        prompt = f"""You are Kavach, a secure AI assistant for MRPL.
+Answer the user's question using ONLY the provided context.
 
-STRICT RULES:
-1. Answer concisely and professionally. Do NOT dump raw text, headers, or page numbers from the context.
-2. If the context contains the answer, extract the specific value (e.g., temperature, interval, capacity) and state it clearly in 1-3 sentences.
-3. If the context does NOT contain the answer, respond EXACTLY with: "I do not have sufficient authorized information in the provided documentation to answer this question."
-4. Do NOT mention "Based on the context" or "According to the document". Just state the answer directly.
-5. Do NOT reproduce classification headers, document footers, or raw table formatting.
-6. At the end of your answer, cite sources in this format: [Source: Filename, Page X].
+CRITICAL RULES:
+1. DO NOT copy-paste raw text, headers, footers, or page numbers from the context.
+2. Synthesize the answer in your own words based on the facts in the context.
+3. If the context contains the answer, state it clearly and concisely.
+4. If the context does NOT contain the answer, say: "I do not have sufficient authorized information."
+5. Append source citation at the end: [Source: Filename].
 
 --- CONTEXT START ---
 {context_text}
 --- CONTEXT END ---
 
 User Question: {augmented_question}
-
 Answer:"""
 
         # Debug: Print the context and prompt to the terminal to verify injection
@@ -198,7 +204,7 @@ Answer:"""
 
         # Ensure citations are tagged in text if not present
         if citations and not any(f"[{c.source}" in raw_answer for c in citations):
-            citation_footer = " Sources: " + ", ".join(f"[{c.source}, Page {c.page}]" for c in citations)
+            citation_footer = " " + " ".join(f"[Source: {c.source}]" for c in citations)
             raw_answer = raw_answer.rstrip() + citation_footer
 
         return Answer(

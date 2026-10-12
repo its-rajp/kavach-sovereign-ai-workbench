@@ -438,6 +438,7 @@ from src.memory.session import get_memory_manager
 from src.ingestion.indexer import get_indexer
 from src.ingestion.loader import load_any_document
 from src.ingestion.chunker import chunk_documents
+from src.rag.chain import clean_chunk_text
 from src.rag.llm import get_llm
 
 settings = get_settings()
@@ -1041,10 +1042,11 @@ with tab_terminal:
         airlock_panel_html = f'<div class="tactical-panel shimmer-trigger" style="margin-top: 12px;"><div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #30353B; padding-bottom: 6px; margin-bottom: 8px;"><div style="display: flex; align-items: center; gap: 6px;"><span style="color: #00FF66;">📁</span><span class="label-caps" style="color: #DEE3EA;">DOCUMENT AIRLOCK</span></div>{airlock_badge}</div><div style="background-color: #0A0F14; border: 1px solid #30353B; padding: 6px; font-family: \'JetBrains Mono\', monospace; font-size: 11px; margin-bottom: 8px;">{doc_rows_html}<div style="border-top: 1px solid #252A30; margin-top: 5px; padding-top: 4px; display: flex; justify-content: space-between; font-size: 10px; color: #8B949E;"><span>Partitioned: Rank ≤ {clearance_rank}</span><span style="color: #00FF66;">Clearance Stamped</span></div></div></div>'
         render_html(airlock_panel_html)
 
+        role_default_idx = {"OPERATOR": 0, "ANALYST": 1, "COMMANDER": 2}.get(st.session_state.get("clearance_level", "ANALYST"), 1)
         classification_choice = st.selectbox(
             "DOCUMENT CLASSIFICATION LEVEL",
             options=["Level 1 (Operator)", "Level 2 (Analyst)", "Level 3 (Commander)"],
-            index=1,
+            index=role_default_idx,
             key="doc_classification_level",
             help="Assign the minimum clearance level required to query and view this document."
         )
@@ -1072,16 +1074,25 @@ with tab_terminal:
             with open(save_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
 
+            # Inside the upload handler (Varahamihira FIX 3)
+            current_role = st.session_state.clearance_level
+            rank_map = {"OPERATOR": 1, "ANALYST": 2, "COMMANDER": 3}
+            assigned_rank = rank_map.get(current_role, doc_clearance_rank)
+
+            print(f"DEBUG INGESTION: Uploading '{safe_filename}' as role '{current_role}' with tag clearance_rank={assigned_rank}")
+
             with st.spinner(f"Executing Ingestion Pipeline under {classification_choice}..."):
                 docs = load_any_document(save_path)
                 chunks = chunk_documents(
                     docs,
                     extra_metadata={
-                        "uploaded_by_role": clearance_level,
-                        "clearance_rank": doc_clearance_rank,
+                        "uploaded_by_role": current_role,
+                        "clearance_rank": assigned_rank,
                         "clearance": doc_clearance_label,
                     }
                 )
+                # Purge older chunks from this same document to guarantee fresh tagging
+                indexer.items = [it for it in indexer.items if it.get("metadata", {}).get("source") != safe_filename]
                 indexer.index_chunks(chunks)
                 active_chunks = indexer.count()
 
@@ -1094,9 +1105,9 @@ with tab_terminal:
                 category="document_intake",
                 severity="low",
                 input_excerpt=safe_filename,
-                note=f"{clearance_level} uploaded {safe_filename} classified as {classification_choice} [Rank {doc_clearance_rank}] ({len(chunks)} chunks stored).",
+                note=f"{clearance_level} uploaded {safe_filename} classified as {classification_choice} [Rank {assigned_rank}] ({len(chunks)} chunks stored).",
             ))
-            st.success(f"✅ Ingested {safe_filename}: {len(chunks)} chunks indexed into Rank {doc_clearance_rank} vault ({classification_choice}).")
+            st.success(f"✅ Ingested {safe_filename}: {len(chunks)} chunks indexed into Rank {assigned_rank} vault ({classification_choice}).")
             time.sleep(1)
             st.rerun()
 
@@ -1373,6 +1384,8 @@ with tab_terminal:
                 for i, doc in enumerate(retrieved_docs):
                     txt_preview = doc.get("text", "")[:100].replace("\n", " ")
                     print(f"DEBUG CHUNK {i}: {txt_preview}...")
+                dbg_context = "\n\n".join([clean_chunk_text(doc.get("text", "")) for doc in retrieved_docs])
+                print(f"DEBUG CONTEXT LENGTH: {len(dbg_context)} characters")
             except Exception as _dbg_err:
                 print(f"DEBUG RETRIEVAL ERROR: {_dbg_err}")
 

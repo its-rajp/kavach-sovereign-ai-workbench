@@ -5,6 +5,7 @@ Features deterministic fallback for offline/air-gapped environments.
 """
 
 from typing import Optional, Dict, Any, List
+import re
 import requests
 from ..config import get_settings
 
@@ -83,24 +84,35 @@ class LocalLLM:
 
         if context_part:
             if "No relevant confidential documents found" in context_part:
-                return "I do not have information regarding this query in the authorized confidential documentation."
+                return "I do not have sufficient authorized information."
 
-            # Return grounded summary of the retrieved context
-            sentences = [s.strip() for s in context_part.split(".") if s.strip()]
-            q_words = set(question_part.lower().split())
+            # Sanitize context part to eliminate any rogue headers
+            context_part = re.sub(r'\[?\s*(?:Source:)?\s*[^\]\n]*\.pdf,?\s*Page\s*\d+\s*\]?', '', context_part, flags=re.IGNORECASE)
+            context_part = re.sub(r'pdf,?\s*Page\s*\d+\]?', '', context_part, flags=re.IGNORECASE)
+            context_part = re.sub(r'^[\]\)\s\-]+', '', context_part).strip()
+
+            # Split sentences on period followed by space/newline, preserving numbers like 9.0 MMTPA
+            sentences = [s.strip() for s in re.split(r'(?<=[a-zA-Z\)])\.\s+', context_part) if s.strip()]
+            q_words = set(w.lower() for w in re.findall(r'\b[a-zA-Z0-9_\-]+\b', question_part))
 
             relevant = []
             for s in sentences:
-                s_words = set(s.lower().split())
+                s_clean = re.sub(r'^.*?\]\s*', '', s).strip()
+                s_clean = re.sub(r'pdf,?\s*Page\s*\d+\]?', '', s_clean, flags=re.IGNORECASE).strip()
+                s_clean = re.sub(r'^[\]\)\s\-]+', '', s_clean).strip()
+                s_words = set(w.lower() for w in re.findall(r'\b[a-zA-Z0-9_\-]+\b', s_clean))
                 if len(q_words.intersection(s_words)) >= 2:
-                    relevant.append(s)
+                    relevant.append(s_clean)
 
             if relevant:
-                return ". ".join(relevant[:3]) + "."
+                ans = ". ".join(relevant[:2]).strip()
+                return ans if ans.endswith(".") else ans + "."
             elif sentences:
-                return sentences[0] + "."
+                s0 = re.sub(r'^.*?\]\s*', '', sentences[0]).strip()
+                s0 = re.sub(r'pdf,?\s*Page\s*\d+\]?', '', s0, flags=re.IGNORECASE).strip()
+                return s0 if s0.endswith(".") else s0 + "."
 
-        return "I do not have sufficient authorized information in the provided documentation to answer this question."
+        return "I do not have sufficient authorized information."
 
 
 _llm_instance: Optional[LocalLLM] = None
