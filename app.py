@@ -441,6 +441,20 @@ from src.ingestion.chunker import chunk_documents
 from src.rag.chain import clean_chunk_text
 from src.rag.llm import get_llm
 
+
+def preprocess_query(query: str) -> str:
+    """Simple keyword boosting for RAG retrieval precision (Trial 1.4 & 2.3)."""
+    q_lower = query.lower()
+    if "schedule" in q_lower or "interval" in q_lower:
+        query += " inspection maintenance months hours"
+    elif "temperature" in q_lower or "temp" in q_lower:
+        query += " degrees celsius thermal limit"
+    elif "capacity" in q_lower or "throughput" in q_lower:
+        query += " MMTPA barrels volume rate"
+    elif "loss" in q_lower or "cost" in q_lower or "financial" in q_lower:
+        query += " INR crore lakh rupee valuation downtime cost"
+    return query
+
 settings = get_settings()
 engine = get_guardrails_engine()
 audit_logger = get_audit_logger()
@@ -1074,11 +1088,12 @@ with tab_terminal:
             with open(save_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
 
-            # Inside the upload handler (Varahamihira FIX 3)
             current_role = st.session_state.clearance_level
             rank_map = {"OPERATOR": 1, "ANALYST": 2, "COMMANDER": 3}
             assigned_rank = rank_map.get(current_role, doc_clearance_rank)
 
+            # FIX 3: Verify Metadata Tagging on Upload
+            print(f"DEBUG UPLOAD: File '{safe_filename}' tagged with rank {assigned_rank}")
             print(f"DEBUG INGESTION: Uploading '{safe_filename}' as role '{current_role}' with tag clearance_rank={assigned_rank}")
 
             with st.spinner(f"Executing Ingestion Pipeline under {classification_choice}..."):
@@ -1375,19 +1390,60 @@ with tab_terminal:
                 st.rerun()
 
             # 3. Standard RAG query through Guardrails Engine
-            # Debug: Verify retrieved chunks for current query directly in terminal (Varahamihira Telemetry)
-            try:
-                rank_map = {"OPERATOR": 1, "ANALYST": 2, "COMMANDER": 3}
-                current_rank = rank_map.get(st.session_state.clearance_level, clearance_rank)
-                retrieved_docs = engine.rag_chain.retriever.retrieve(user_input, role=clearance_level.lower(), top_k=3)
-                print(f"DEBUG RETRIEVAL: Found {len(retrieved_docs)} chunks for rank {current_rank}")
-                for i, doc in enumerate(retrieved_docs):
-                    txt_preview = doc.get("text", "")[:100].replace("\n", " ")
-                    print(f"DEBUG CHUNK {i}: {txt_preview}...")
-                dbg_context = "\n\n".join([clean_chunk_text(doc.get("text", "")) for doc in retrieved_docs])
-                print(f"DEBUG CONTEXT LENGTH: {len(dbg_context)} characters")
-            except Exception as _dbg_err:
-                print(f"DEBUG RETRIEVAL ERROR: {_dbg_err}")
+            # 1. Retrieve docs with clearance filter and security check
+            rank_map = {"OPERATOR": 1, "ANALYST": 2, "COMMANDER": 3}
+            current_rank = rank_map.get(st.session_state.clearance_level, clearance_rank)
+            enhanced_query = preprocess_query(user_input)
+            retrieved_docs, is_clearance_blocked, min_req_rank = engine.rag_chain.retriever.retrieve_with_security_check(
+                enhanced_query, role=clearance_level.lower(), top_k=4
+            )
+            print(f"DEBUG RETRIEVAL: Found {len(retrieved_docs)} chunks for rank {current_rank} (blocked={is_clearance_blocked})")
+            for i, doc in enumerate(retrieved_docs):
+                txt_preview = doc.get("text", "")[:100].replace("\n", " ")
+                print(f"DEBUG CHUNK {i} (score={doc.get('score', 0)}): {txt_preview}...")
+
+            # 2. HARD STOP CONDITION (CRITICAL)
+            if not retrieved_docs:
+                print(f"DEBUG: No chunks found for '{user_input}' at rank {current_rank}. Bypassing LLM.")
+                intercept_text = "🛡️ SECURITY INTERCEPT: No authorized information found for this query at your clearance level."
+                alert_dict = {
+                    "title": "🛡️ SECURITY INTERCEPT: HIGHER CLEARANCE REQUIRED",
+                    "message": f"Access denied under sovereign air-gap policy for {clearance_level}. Information classification exceeds caller rank.",
+                    "rule": "SEC-R-01",
+                    "severity": "high",
+                    "verdict": "blocked",
+                }
+                st.session_state.latest_alert = alert_dict
+                st.session_state.messages.append({
+                    "role": "user",
+                    "content": user_input,
+                    "is_attack": True,
+                    "timestamp": now_str,
+                })
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": intercept_text,
+                    "citations": [],
+                    "timestamp": now_str,
+                    "alert_info": alert_dict,
+                })
+                audit_logger.log_event(AuditRecord(
+                    session_id=st.session_state.session_id,
+                    role=clearance_level.lower(),
+                    stage="retrieval",
+                    verdict="blocked",
+                    rule_id="SEC-R-01",
+                    category="clearance_intercept",
+                    severity="high",
+                    input_excerpt=audit_logger.sanitize_excerpt(user_input),
+                    ai_response=intercept_text,
+                    note=f"Hard stop: No authorized chunks retrieved for rank {current_rank}.",
+                ))
+                st.rerun()
+
+            # 3. Proceed with LLM only if we have valid context
+            dbg_context = "\n\n".join([clean_chunk_text(doc.get("text", "")) for doc in retrieved_docs])
+            print(f"DEBUG CONTEXT LENGTH: {len(dbg_context)} characters")
 
             with st.spinner(f"Processing query through Sovereign Guardrails ({clearance_level} Rank {clearance_rank} Enclave)..."):
                 response = engine.generate(

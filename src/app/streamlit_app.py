@@ -1390,24 +1390,60 @@ with tab_terminal:
                 st.rerun()
 
             # 3. Standard RAG query through Guardrails Engine
-            # Debug: Verify retrieved chunks for current query directly in terminal (Varahamihira Telemetry)
-            try:
-                rank_map = {"OPERATOR": 1, "ANALYST": 2, "COMMANDER": 3}
-                current_rank = rank_map.get(st.session_state.clearance_level, clearance_rank)
-                # Apply keyword boosting before similarity search (FIX 1)
-                enhanced_query = preprocess_query(user_input)
-                retrieved_docs = engine.rag_chain.retriever.retrieve(enhanced_query, role=clearance_level.lower(), top_k=4)
-                # FIX 1: Lower the similarity threshold to 0.45 so technical queries pass through
-                high_confidence_docs = [doc for doc in retrieved_docs if doc.get("score", 0) >= 0.45 or doc.get("base_sim", 0) >= 0.30]
-                print(f"DEBUG RETRIEVAL: Found {len(retrieved_docs)} chunks ({len(high_confidence_docs)} with score >= 0.45) for rank {current_rank}")
-                for i, doc in enumerate(retrieved_docs):
-                    txt_preview = doc.get("text", "")[:100].replace("\n", " ")
-                    print(f"DEBUG CHUNK {i} (score={doc.get('score', 0)}): {txt_preview}...")
-                # FIX 2: Use raw docs without strict deduplication to avoid hash collisions
-                dbg_context = "\n\n".join([clean_chunk_text(doc.get("text", "")) for doc in retrieved_docs])
-                print(f"DEBUG CONTEXT LENGTH: {len(dbg_context)} characters")
-            except Exception as _dbg_err:
-                print(f"DEBUG RETRIEVAL ERROR: {_dbg_err}")
+            # 1. Retrieve docs with clearance filter and security check
+            rank_map = {"OPERATOR": 1, "ANALYST": 2, "COMMANDER": 3}
+            current_rank = rank_map.get(st.session_state.clearance_level, clearance_rank)
+            enhanced_query = preprocess_query(user_input)
+            retrieved_docs, is_clearance_blocked, min_req_rank = engine.rag_chain.retriever.retrieve_with_security_check(
+                enhanced_query, role=clearance_level.lower(), top_k=4
+            )
+            print(f"DEBUG RETRIEVAL: Found {len(retrieved_docs)} chunks for rank {current_rank} (blocked={is_clearance_blocked})")
+            for i, doc in enumerate(retrieved_docs):
+                txt_preview = doc.get("text", "")[:100].replace("\n", " ")
+                print(f"DEBUG CHUNK {i} (score={doc.get('score', 0)}): {txt_preview}...")
+
+            # 2. HARD STOP CONDITION (CRITICAL)
+            if not retrieved_docs:
+                print(f"DEBUG: No chunks found for '{user_input}' at rank {current_rank}. Bypassing LLM.")
+                intercept_text = "🛡️ SECURITY INTERCEPT: No authorized information found for this query at your clearance level."
+                alert_dict = {
+                    "title": "🛡️ SECURITY INTERCEPT: HIGHER CLEARANCE REQUIRED",
+                    "message": f"Access denied under sovereign air-gap policy for {clearance_level}. Information classification exceeds caller rank.",
+                    "rule": "SEC-R-01",
+                    "severity": "high",
+                    "verdict": "blocked",
+                }
+                st.session_state.latest_alert = alert_dict
+                st.session_state.messages.append({
+                    "role": "user",
+                    "content": user_input,
+                    "is_attack": True,
+                    "timestamp": now_str,
+                })
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": intercept_text,
+                    "citations": [],
+                    "timestamp": now_str,
+                    "alert_info": alert_dict,
+                })
+                audit_logger.log_event(AuditRecord(
+                    session_id=st.session_state.session_id,
+                    role=clearance_level.lower(),
+                    stage="retrieval",
+                    verdict="blocked",
+                    rule_id="SEC-R-01",
+                    category="clearance_intercept",
+                    severity="high",
+                    input_excerpt=audit_logger.sanitize_excerpt(user_input),
+                    ai_response=intercept_text,
+                    note=f"Hard stop: No authorized chunks retrieved for rank {current_rank}.",
+                ))
+                st.rerun()
+
+            # 3. Proceed with LLM only if we have valid context
+            dbg_context = "\n\n".join([clean_chunk_text(doc.get("text", "")) for doc in retrieved_docs])
+            print(f"DEBUG CONTEXT LENGTH: {len(dbg_context)} characters")
 
             with st.spinner(f"Processing query through Sovereign Guardrails ({clearance_level} Rank {clearance_rank} Enclave)..."):
                 response = engine.generate(
