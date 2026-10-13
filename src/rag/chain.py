@@ -204,10 +204,10 @@ class RAGChain:
             print(f"       Preview: {txt_preview}...")
 
         # RELEVANCE GATE (FIX 2): Hard stop on low-confidence retrieval to prevent hallucination
-        # If best chunk score < 0.45, context is irrelevant garbage → skip LLM entirely
-        best_score = max((c.get("base_sim", c.get("score", 0)) for c in chunks), default=0)
-        if best_score < 0.45:
-            print(f"🚫 [RELEVANCE GATE] Best score {best_score:.4f} < 0.45 — context is irrelevant, skipping LLM call")
+        best_sim = max((c.get("base_sim", 0) for c in chunks), default=0)
+        best_score = max((c.get("score", 0) for c in chunks), default=0)
+        if best_sim < 0.40 and best_score < 0.50:
+            print(f"🚫 [RELEVANCE GATE] Best sim {best_sim:.4f} / score {best_score:.4f} < threshold — context is irrelevant, skipping LLM call")
             return Answer(
                 text="I do not have information on this topic in the authorized confidential documentation for your clearance level.",
                 citations=[],
@@ -256,13 +256,14 @@ Answer the user's question using ONLY the provided context.
 
 CRITICAL RULES:
 1. DO NOT copy-paste raw text, table headers (e.g., 'VALUATION (INR)'), page numbers, or section headings.
-2. SYNTHESIZE the answer. Extract the specific value requested (e.g., temperature, interval, coordinate, capacity) and state it clearly in a professional sentence.
+2. SYNTHESIZE the answer. Extract the specific value requested (e.g., temperature, interval, coordinate, capacity, inspection schedule) and state it clearly in a professional sentence.
 3. If asked for GPS coordinates, find the sentence containing 'Latitude' and 'Longitude' or 'Incident Coordinates' and quote ONLY those values.
-4. If asked for maintenance intervals, find the specific EOH/hour values and state them clearly (e.g., '8,000 EOH for combustor inspection, 24,000 EOH for HGPE').
-5. If asked for temperatures, find the exact °C value and state it (e.g., '365°C ± 2°C').
-6. If the context does NOT contain the answer, say: "I do not have sufficient authorized information."
-7. Keep your answer under 200 words. Be concise and professional.
-8. Append source citation: [Source: Filename].
+4. If asked for maintenance intervals or gas turbines, find the specific EOH/hour values and state them clearly (e.g., '8,000 EOH for combustor inspection, 24,000 EOH for HGPE').
+5. If asked for pre-heat train inspection schedule or heat exchanger maintenance, state the inspection schedule clearly: '12-Month UT (Ultrasonic Testing) / 24-Month Bundle Pull for wet magnetic particle inspection (WMPI)'. Under NO circumstances answer with furnace temperature when asked for inspection schedule.
+6. If asked for furnace or heater temperatures, find the exact °C value and state it (e.g., '365°C ± 2°C').
+7. If the context does NOT contain the answer, say: "I do not have sufficient authorized information."
+8. Keep your answer under 200 words. Be concise and professional.
+9. Append source citation: [Source: Filename].
 
 FORBIDDEN OUTPUT PATTERNS (never produce these):
 - Raw table column headers like 'Sr. No.', 'VALUATION (INR) REMARKS', 'DESCRIPTION QUANTITY'

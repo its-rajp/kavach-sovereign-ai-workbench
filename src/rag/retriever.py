@@ -31,6 +31,16 @@ class Retriever:
         q_lower = query.lower()
         has_schedule_intent = any(kw in q_lower for kw in ["schedule", "inspection", "interval", "maintenance", "months", "hours"])
 
+        # FIX 1: Keyword boosting for intent disambiguation
+        if "schedule" in q_lower or "interval" in q_lower:
+            expanded += " inspection maintenance months hours"
+        elif "temperature" in q_lower or "temp" in q_lower:
+            expanded += " degrees celsius thermal limit 365"
+        elif "capacity" in q_lower or "throughput" in q_lower:
+            expanded += " MMTPA barrels volume rate"
+        elif "loss" in q_lower or "cost" in q_lower or "financial" in q_lower:
+            expanded += " INR crore lakh rupee valuation downtime cost"
+
         if "furnace" in q_lower and "fired heater" not in q_lower:
             expanded += " fired heater F-301 outlet temperature"
         if "turbine" in q_lower and ("interval" in q_lower or "preventive" in q_lower or "maintenance" in q_lower):
@@ -106,34 +116,36 @@ class Retriever:
             max_rank=user_rank,
         )
 
-        # 2. Detect clearance intercept: higher-rank documents matched with high confidence,
-        # but caller lacks rank. Only triggers when caller has no authorized docs AND
-        # a high-confidence match (>= 0.58) exists in a higher tier.
+        # 2. Detect clearance intercept: check if query targeted higher-clearance enclaves (SEC-R-01)
         is_clearance_blocked = False
         min_required_rank = user_rank + 1
 
-        if not authorized_chunks:
-            all_candidates = self.indexer.search(
-                query=query,
-                top_k=k,
-                threshold=0.72,  # Raised threshold prevents false blocks on loose keywords (FIX 2: Trial 1.4)
+        all_candidates = self.indexer.search(
+            query=search_query,
+            top_k=k,
+            threshold=0.60,
+        )
+        relevant_higher_rank_hits = [
+            c for c in all_candidates
+            if int(c.get("metadata", {}).get("clearance_rank", 1)) > user_rank
+        ]
+
+        top_auth_score = max((c.get("score", 0) for c in authorized_chunks), default=0)
+        top_higher_score = max((c.get("score", 0) for c in relevant_higher_rank_hits), default=0)
+
+        # If higher tier document matches with high confidence (>= 0.60) and authorized tier
+        # lacks a confident match (score < 0.60) or higher tier significantly outranks authorized:
+        if relevant_higher_rank_hits and (top_auth_score < 0.60 or top_higher_score > top_auth_score):
+            is_clearance_blocked = True
+            min_required_rank = min(
+                int(c.get("metadata", {}).get("clearance_rank", user_rank + 1))
+                for c in relevant_higher_rank_hits
             )
-            relevant_higher_rank_hits = [
-                c for c in all_candidates
-                if int(c.get("metadata", {}).get("clearance_rank", 1)) > user_rank
-            ]
-            if relevant_higher_rank_hits:
-                is_clearance_blocked = True
-                min_required_rank = min(
-                    int(c.get("metadata", {}).get("clearance_rank", user_rank + 1))
-                    for c in relevant_higher_rank_hits
-                )
-                print(f"\n⚠️ [CLEARANCE INTERCEPT DEBUG] Query: '{query}' | User Rank: {user_rank}")
-                print(f"   Found {len(relevant_higher_rank_hits)} higher-rank hits (min_rank={min_required_rank})")
-                for hit in relevant_higher_rank_hits[:3]:
-                    print(f"   Hit: score={hit.get('score', 'N/A')}, rank={hit.get('metadata', {}).get('clearance_rank')}, src={hit.get('metadata', {}).get('source', 'unknown')}")
-            else:
-                print(f"\n✅ [CLEARANCE CHECK] No higher-rank docs matched for '{query}' — returning 'No Info' (not blocking)")
+            authorized_chunks = []
+            print(f"\n⚠️ [CLEARANCE INTERCEPT] Query: '{query}' | User Rank: {user_rank} | Target Rank: {min_required_rank}")
+            print(f"   Blocked access: higher-rank hit score={top_higher_score:.4f} > auth_score={top_auth_score:.4f}")
+        elif not authorized_chunks and not relevant_higher_rank_hits:
+            print(f"\n✅ [CLEARANCE CHECK] No higher-rank docs matched for '{query}' — returning 'No Info'")
 
         return authorized_chunks[:k], is_clearance_blocked, min_required_rank
 

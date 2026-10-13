@@ -441,6 +441,20 @@ from src.ingestion.chunker import chunk_documents
 from src.rag.chain import clean_chunk_text
 from src.rag.llm import get_llm
 
+
+def preprocess_query(query: str) -> str:
+    """Simple keyword boosting for RAG retrieval precision (Trial 1.4 & 2.3)."""
+    q_lower = query.lower()
+    if "schedule" in q_lower or "interval" in q_lower:
+        query += " inspection maintenance months hours"
+    elif "temperature" in q_lower or "temp" in q_lower:
+        query += " degrees celsius thermal limit"
+    elif "capacity" in q_lower or "throughput" in q_lower:
+        query += " MMTPA barrels volume rate"
+    elif "loss" in q_lower or "cost" in q_lower or "financial" in q_lower:
+        query += " INR crore lakh rupee valuation downtime cost"
+    return query
+
 settings = get_settings()
 engine = get_guardrails_engine()
 audit_logger = get_audit_logger()
@@ -1379,12 +1393,16 @@ with tab_terminal:
             try:
                 rank_map = {"OPERATOR": 1, "ANALYST": 2, "COMMANDER": 3}
                 current_rank = rank_map.get(st.session_state.clearance_level, clearance_rank)
-                retrieved_docs = engine.rag_chain.retriever.retrieve(user_input, role=clearance_level.lower(), top_k=5)
-                print(f"DEBUG RETRIEVAL: Found {len(retrieved_docs)} chunks for rank {current_rank}")
+                # Apply keyword boosting before similarity search (FIX 1)
+                enhanced_query = preprocess_query(user_input)
+                retrieved_docs = engine.rag_chain.retriever.retrieve(enhanced_query, role=clearance_level.lower(), top_k=4)
+                # Filter out low-confidence results (FIX 2)
+                high_confidence_docs = [doc for doc in retrieved_docs if doc.get("score", 0) >= 0.60 or doc.get("base_sim", 0) >= 0.40]
+                print(f"DEBUG RETRIEVAL: Found {len(retrieved_docs)} chunks ({len(high_confidence_docs)} high confidence) for rank {current_rank}")
                 for i, doc in enumerate(retrieved_docs):
                     txt_preview = doc.get("text", "")[:100].replace("\n", " ")
-                    print(f"DEBUG CHUNK {i}: {txt_preview}...")
-                dbg_context = "\n\n".join([clean_chunk_text(doc.get("text", "")) for doc in retrieved_docs])
+                    print(f"DEBUG CHUNK {i} (score={doc.get('score', 0)}): {txt_preview}...")
+                dbg_context = "\n\n".join([clean_chunk_text(doc.get("text", "")) for doc in high_confidence_docs])
                 print(f"DEBUG CONTEXT LENGTH: {len(dbg_context)} characters")
             except Exception as _dbg_err:
                 print(f"DEBUG RETRIEVAL ERROR: {_dbg_err}")
