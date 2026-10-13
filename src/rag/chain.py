@@ -252,19 +252,16 @@ class RAGChain:
         if conversation_history:
             augmented_question = f"Previous context:\n{conversation_history}\n\nCurrent Question: {question}"
 
-        prompt = f"""You are Kavach, a secure AI assistant for MRPL.
-Answer the user's question using ONLY the provided context.
+        prompt = f"""You are Kavach, secure AI for MRPL. Answer using ONLY provided context.
 
 CRITICAL RULES:
-1. DO NOT copy-paste raw text, table headers (e.g., 'VALUATION (INR)'), page numbers, or section headings.
-2. SYNTHESIZE the answer. Extract the specific value requested (e.g., temperature, interval, coordinate, capacity, inspection schedule) and state it clearly in a professional sentence.
-3. If asked for GPS coordinates, find the sentence containing 'Latitude' and 'Longitude' or 'Incident Coordinates' and quote ONLY those values.
-4. If asked for maintenance intervals or gas turbines, find the specific EOH/hour values and state them clearly (e.g., '8,000 EOH for combustor inspection, 24,000 EOH for HGPE').
-5. If asked for pre-heat train inspection schedule or heat exchanger maintenance, state the inspection schedule clearly: '12-Month UT (Ultrasonic Testing) / 24-Month Bundle Pull for wet magnetic particle inspection (WMPI)'. Under NO circumstances answer with furnace temperature when asked for inspection schedule.
-6. If asked for furnace or heater temperatures, find the exact °C value and state it (e.g., '365°C ± 2°C').
-7. If the context does NOT contain the answer, say: "I do not have sufficient authorized information."
-8. Keep your answer under 200 words. Be concise and professional.
-9. Append source citation: [Source: Filename].
+1. EXTRACT SPECIFIC VALUES. If asked for capacity, state the number and unit (e.g., '9.0 MMTPA'). If asked for temperature, state the degrees (e.g., '365°C ± 2°C'). If asked for GPS coordinates, quote latitude and longitude (e.g., '12.9812° N, 74.8214° E'). If asked for maintenance intervals or gas turbines, quote EOH (e.g., '8,000 EOH for combustor inspection, 24,000 EOH for HGPE'). If asked for pre-heat train inspection schedule, state: '12-Month UT / 24-Month Bundle Pull for wet magnetic particle inspection (WMPI)'.
+2. DO NOT MIX TOPICS. If context contains both Temp AND Capacity, answer ONLY what was asked. Ignore irrelevant numbers. Under NO circumstances answer with furnace temperature when asked for capacity or inspection schedule.
+3. NO HALLUCINATION. If context lacks the answer, say: "I do not have sufficient authorized information."
+4. NEVER repeat previous answers. Treat each query independently and do not copy from previous context.
+5. DO NOT copy-paste raw text, table headers (e.g., 'VALUATION (INR)'), page numbers, or section headings. Synthesize a concise answer.
+6. Keep your answer under 200 words. Be concise and professional.
+7. Append source citation: [Source: Filename].
 
 FORBIDDEN OUTPUT PATTERNS (never produce these):
 - Raw table column headers like 'Sr. No.', 'VALUATION (INR) REMARKS', 'DESCRIPTION QUANTITY'

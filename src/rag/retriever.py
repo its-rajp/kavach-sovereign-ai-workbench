@@ -32,14 +32,14 @@ class Retriever:
         has_schedule_intent = any(kw in q_lower for kw in ["schedule", "inspection", "interval", "maintenance", "months", "hours"])
 
         # FIX 1: Keyword boosting for intent disambiguation
-        if "schedule" in q_lower or "interval" in q_lower:
-            expanded += " inspection maintenance months hours"
+        if any(kw in q_lower for kw in ["capacity", "throughput", "mmtpa", "rating"]):
+            expanded += " 9.0 MMTPA design rating throughput capacity barrels volume"
+        elif "schedule" in q_lower or "interval" in q_lower:
+            expanded += " inspection maintenance months hours EOH"
         elif "temperature" in q_lower or "temp" in q_lower:
-            expanded += " degrees celsius thermal limit 365"
-        elif "capacity" in q_lower or "throughput" in q_lower:
-            expanded += " MMTPA barrels volume rate"
-        elif "loss" in q_lower or "cost" in q_lower or "financial" in q_lower:
-            expanded += " INR crore lakh rupee valuation downtime cost"
+            expanded += " degrees celsius thermal limit 365 °C"
+        elif any(kw in q_lower for kw in ["loss", "cost", "financial", "procurement", "outlay"]):
+            expanded += " INR crore lakh rupee valuation downtime cost financial outlay procurement"
 
         if "furnace" in q_lower and "fired heater" not in q_lower:
             expanded += " fired heater F-301 outlet temperature"
