@@ -198,9 +198,21 @@ class RAGChain:
             src = meta.get("source", "unknown")
             pg = meta.get("page", 1)
             rk = meta.get("clearance_rank", 1)
+            score = c.get("base_sim", c.get("score", 0))
             txt_preview = c.get("text", "")[:120].replace("\n", " ")
-            print(f"   [{idx+1}] Source: {src} | Page: {pg} | Rank: {rk} | Length: {len(c.get('text', ''))} chars")
+            print(f"   [{idx+1}] Source: {src} | Page: {pg} | Rank: {rk} | Score: {score} | Length: {len(c.get('text', ''))} chars")
             print(f"       Preview: {txt_preview}...")
+
+        # RELEVANCE GATE (FIX 2): Hard stop on low-confidence retrieval to prevent hallucination
+        # If best chunk score < 0.45, context is irrelevant garbage → skip LLM entirely
+        best_score = max((c.get("base_sim", c.get("score", 0)) for c in chunks), default=0)
+        if best_score < 0.45:
+            print(f"🚫 [RELEVANCE GATE] Best score {best_score:.4f} < 0.45 — context is irrelevant, skipping LLM call")
+            return Answer(
+                text="I do not have information on this topic in the authorized confidential documentation for your clearance level.",
+                citations=[],
+                verdict="answered",
+            )
 
         # 2. Deduplicate chunks to prevent Echo Sickness (FIX 1)
         unique_chunks = deduplicate_chunks(chunks)

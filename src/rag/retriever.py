@@ -29,12 +29,21 @@ class Retriever:
         """Expand industrial queries with synonyms to resolve semantic mismatch."""
         expanded = query
         q_lower = query.lower()
+        has_schedule_intent = any(kw in q_lower for kw in ["schedule", "inspection", "interval", "maintenance", "months", "hours"])
+
         if "furnace" in q_lower and "fired heater" not in q_lower:
             expanded += " fired heater F-301 outlet temperature"
         if "turbine" in q_lower and ("interval" in q_lower or "preventive" in q_lower or "maintenance" in q_lower):
             expanded += " combustor inspection CI HGPE EOH 8000 24000 overhaul"
+
+        # Pre-heat train: split by intent to prevent temperature chunk from hijacking schedule queries
         if "pre-heat" in q_lower or "preheat" in q_lower:
-            expanded += " exchangers crude charge 12-Month UT 24-Month bundle pull heat exchanger"
+            if has_schedule_intent:
+                # Schedule-specific: boost ONLY schedule terms, suppress temperature terms
+                expanded += " pre-heat train inspection schedule 12-Month UT thickness survey 24-Month bundle pull NDT maintenance interval"
+            else:
+                expanded += " exchangers crude charge heat exchanger pre-heat train"
+
         if "gps" in q_lower or "coordinate" in q_lower:
             expanded += " latitude longitude 12.9812 74.8214 incident coordinates location"
         if "capacity" in q_lower or "throughput" in q_lower:
@@ -47,6 +56,11 @@ class Retriever:
             expanded += " NDT inspection monitoring wall thinning"
         if "temperature" in q_lower and "cdu" in q_lower:
             expanded += " fired heater outlet 365 celsius CDU-III"
+        if "financial" in q_lower or "loss" in q_lower or "cost" in q_lower:
+            expanded += " INR crore lakh rupee valuation downtime financial loss damage cost"
+        # General schedule/interval booster (when not already handled above)
+        if has_schedule_intent and "pre-heat" not in q_lower and "preheat" not in q_lower and "turbine" not in q_lower:
+            expanded += " maintenance schedule inspection interval months hours periodic"
         return expanded
 
     def retrieve(self, query: str, role: Union[Role, str] = Role.ANALYST, top_k: Optional[int] = None) -> List[Dict[str, Any]]:
