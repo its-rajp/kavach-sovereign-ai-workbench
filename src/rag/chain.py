@@ -11,7 +11,7 @@ import hashlib
 from typing import List, Dict, Any, Optional, Literal, Union
 from pydantic import BaseModel, Field
 from .retriever import Retriever, get_retriever
-from .llm import LocalLLM, get_llm
+from .llm import LocalLLM, get_llm, generate_with_fallback
 from ..security.rbac import Role
 from ..config import get_settings
 
@@ -281,8 +281,8 @@ Answer:"""
         print(f"DEBUG PROMPT SNIPPET: {prompt[:200]}...")
         print(f"\n📝 [PROMPT INJECTED TO OLLAMA]:\n{prompt[:500]}...\n[Total Prompt Chars: {len(prompt)}]\n")
 
-        # 4. Generate via LLM (Ollama qwen2.5:3b)
-        raw_answer = self.llm.generate(prompt=prompt)
+        # 4. Generate via LLM with Fallback Chain & 5.0s SLA Guard (Option A)
+        raw_answer = generate_with_fallback(prompt=prompt)
 
         # 5. Enforce anti-exfiltration length cap (SEC-O-04)
         if len(raw_answer) > self.settings.max_answer_chars:

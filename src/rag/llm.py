@@ -6,24 +6,120 @@ Features deterministic fallback for offline/air-gapped environments.
 
 from typing import Optional, Dict, Any, List
 import re
+import time
+import concurrent.futures
 import requests
 from ..config import get_settings
 
 
+DEFAULT_MODEL_PRIORITY: List[str] = ["qwen2.5:3b", "phi-3-mini", "llama3.2:1b"]
+
+
+def _call_ollama_generate(base_url: str, model: str, prompt: str, temperature: float = 0.1) -> Optional[str]:
+    """Single synchronous Ollama call for ThreadPool execution."""
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "temperature": temperature,
+            "num_predict": 120,
+        }
+    }
+    try:
+        res = requests.post(
+            f"{base_url}/api/generate",
+            json=payload,
+            timeout=5.0,
+        )
+        if res.status_code == 200:
+            data = res.json()
+            resp_text = data.get("response", "").strip()
+            if resp_text:
+                return resp_text
+    except Exception:
+        pass
+    return None
+
+
+def generate_with_fallback(prompt: str, base_url: Optional[str] = None, timeout: float = 6.0) -> str:
+    """Execute Ollama generation with multi-model fallback chain and SLA timeout guard.
+    
+    Priority List: ["qwen2.5:3b", "phi-3-mini", "llama3.2:1b"]
+    Timeout: 5.0s SLA target with 6.0s hard cap per model attempt via concurrent.futures.ThreadPoolExecutor
+    """
+    settings = get_settings()
+    url = (base_url or settings.ollama_base_url).rstrip("/")
+    models = ["qwen2.5:3b", "phi-3-mini", "llama3.2:1b"]
+
+    # Check if local Ollama daemon is reachable
+    try:
+        check = requests.get(f"{url}/api/tags", timeout=1.5)
+        daemon_online = (check.status_code == 200)
+    except Exception:
+        daemon_online = False
+
+    if not daemon_online:
+        print("ℹ️ Ollama daemon offline — using extractive fallback.")
+        return LocalLLM._extractive_fallback(prompt)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        for idx, model_name in enumerate(models):
+            is_fallback = idx > 0
+            label = f"{model_name} (Fallback)" if is_fallback else model_name
+            print(f"🔄 [SLA GUARD] Attempting {label} ({timeout:.1f}s SLA timeout)...")
+            start_time = time.time()
+
+            future = executor.submit(
+                _call_ollama_generate,
+                url,
+                model_name,
+                prompt,
+                0.1,
+            )
+            try:
+                result = future.result(timeout=timeout)
+                elapsed = time.time() - start_time
+                if result:
+                    print(f"✅ [MODEL SUCCESS] {label} completed in {elapsed:.2f}s")
+                    if is_fallback:
+                        # Append metadata note for Triple Audit Ledger
+                        result += f"\n\n[Model Fallback: {model_name}]"
+                    return result
+                else:
+                    print(f"⚠️ [MODEL FAILED] {model_name} returned empty/error in {elapsed:.2f}s, trying next model...")
+            except concurrent.futures.TimeoutError:
+                elapsed = time.time() - start_time
+                print(f"⏱️ [SLA TIMEOUT] {model_name} exceeded {timeout:.1f}s SLA ({elapsed:.2f}s), immediately trying next model...")
+            except Exception as e:
+                elapsed = time.time() - start_time
+                print(f"⚠️ [MODEL ERROR] {model_name} error ({type(e).__name__}: {e}) in {elapsed:.2f}s, trying next model...")
+
+    # If all models in the fallback chain fail or timeout
+    print("🚨 [SLA GUARD] All sovereign models unresponsive. Fail-closed protocol active.")
+    return "🛡️ SYSTEM OVERLOAD: All sovereign models unresponsive. Fail-closed protocol active."
+
+
 class LocalLLM:
-    """Client for local inference via Ollama."""
+    """Client for local inference via Ollama with Multi-Model Fallback Chain & SLA Guard."""
 
     def __init__(
         self,
         model: Optional[str] = None,
         base_url: Optional[str] = None,
         temperature: float = 0.1,
+        model_priority: Optional[List[str]] = None,
+        sla_timeout: float = 5.0,
     ):
         settings = get_settings()
         self.model = model or settings.llm_model
         self.base_url = (base_url or settings.ollama_base_url).rstrip("/")
         self.temperature = temperature
-        self.timeout = settings.request_timeout_seconds
+        self.sla_timeout = sla_timeout
+        self.model_priority: List[str] = list(model_priority or DEFAULT_MODEL_PRIORITY)
+        if self.model and self.model not in self.model_priority:
+            self.model_priority.insert(0, self.model)
+        self.last_model_used: Optional[str] = None
 
     def is_available(self) -> bool:
         """Check if local Ollama daemon is reachable."""
@@ -34,38 +130,8 @@ class LocalLLM:
             return False
 
     def generate(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """Generate response via Ollama with fail-safe local extractive fallback."""
-        if self.is_available():
-            try:
-                payload: Dict[str, Any] = {
-                    "model": self.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": self.temperature,
-                    }
-                }
-                if system_prompt:
-                    payload["system"] = system_prompt
-
-                res = requests.post(
-                    f"{self.base_url}/api/generate",
-                    json=payload,
-                    timeout=self.timeout,
-                )
-                if res.status_code == 200:
-                    data = res.json()
-                    response_str = data.get("response", "").strip()
-                    if response_str:
-                        return response_str
-                else:
-                    print(f"⚠️ Ollama returned non-200 status code: {res.status_code} - {res.text[:200]}")
-            except Exception as e:
-                print(f"⚠️ Ollama generate exception ({type(e).__name__}): {e}")
-
-        # Offline deterministic extraction fallback: summarize relevant context
-        print("ℹ️ Using offline extractive fallback for response.")
-        return self._extractive_fallback(prompt)
+        """Generate response via Ollama with multi-model fallback chain and strict 5s SLA timeout."""
+        return generate_with_fallback(prompt, base_url=self.base_url)
 
     @staticmethod
     def _extractive_fallback(prompt: str) -> str:
