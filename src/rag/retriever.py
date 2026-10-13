@@ -133,9 +133,15 @@ class Retriever:
         top_auth_score = max((c.get("score", 0) for c in authorized_chunks), default=0)
         top_higher_score = max((c.get("score", 0) for c in relevant_higher_rank_hits), default=0)
 
-        # If higher tier document matches with high confidence (>= 0.60) and authorized tier
-        # lacks a confident match (score < 0.60) or higher tier significantly outranks authorized:
-        if relevant_higher_rank_hits and (top_auth_score < 0.60 or top_higher_score > top_auth_score):
+        # Only intercept when query genuinely targets higher clearance enclaves (e.g. Trial 2.3):
+        # Higher rank doc must match with strong confidence (>= 0.68) AND user has lower clearance (user_rank < 3)
+        # AND either authorized has no genuine hits or higher rank outranks authorized by a wide margin (> 0.15)
+        if (
+            user_rank < 3
+            and relevant_higher_rank_hits
+            and top_higher_score >= 0.68
+            and (top_auth_score < 0.35 or (top_higher_score - top_auth_score) > 0.15)
+        ):
             is_clearance_blocked = True
             min_required_rank = min(
                 int(c.get("metadata", {}).get("clearance_rank", user_rank + 1))

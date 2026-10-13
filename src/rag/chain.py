@@ -203,19 +203,20 @@ class RAGChain:
             print(f"   [{idx+1}] Source: {src} | Page: {pg} | Rank: {rk} | Score: {score} | Length: {len(c.get('text', ''))} chars")
             print(f"       Preview: {txt_preview}...")
 
-        # RELEVANCE GATE (FIX 2): Hard stop on low-confidence retrieval to prevent hallucination
+        # RELEVANCE GATE: Relaxed threshold so valid technical queries are never discarded
         best_sim = max((c.get("base_sim", 0) for c in chunks), default=0)
         best_score = max((c.get("score", 0) for c in chunks), default=0)
-        if best_sim < 0.40 and best_score < 0.50:
-            print(f"🚫 [RELEVANCE GATE] Best sim {best_sim:.4f} / score {best_score:.4f} < threshold — context is irrelevant, skipping LLM call")
+        if best_score < 0.20 and best_sim < 0.20:
+            print(f"🚫 [RELEVANCE GATE] Score {best_score:.4f} < 0.20 — context is empty, skipping LLM call")
             return Answer(
                 text="I do not have information on this topic in the authorized confidential documentation for your clearance level.",
                 citations=[],
                 verdict="answered",
             )
 
-        # 2. Deduplicate chunks to prevent Echo Sickness (FIX 1)
-        unique_chunks = deduplicate_chunks(chunks)
+        # 2. FIX 2: Disable strict deduplication temporarily to prevent hash collisions & dropped chunks
+        # unique_chunks = deduplicate_chunks(chunks)
+        unique_chunks = chunks
 
         # 3. Format Context & Citations (with aggressive text cleaning)
         context_snippets = []

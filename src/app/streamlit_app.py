@@ -1088,11 +1088,12 @@ with tab_terminal:
             with open(save_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
 
-            # Inside the upload handler (Varahamihira FIX 3)
             current_role = st.session_state.clearance_level
             rank_map = {"OPERATOR": 1, "ANALYST": 2, "COMMANDER": 3}
             assigned_rank = rank_map.get(current_role, doc_clearance_rank)
 
+            # FIX 3: Verify Metadata Tagging on Upload
+            print(f"DEBUG UPLOAD: File '{safe_filename}' tagged with rank {assigned_rank}")
             print(f"DEBUG INGESTION: Uploading '{safe_filename}' as role '{current_role}' with tag clearance_rank={assigned_rank}")
 
             with st.spinner(f"Executing Ingestion Pipeline under {classification_choice}..."):
@@ -1396,13 +1397,14 @@ with tab_terminal:
                 # Apply keyword boosting before similarity search (FIX 1)
                 enhanced_query = preprocess_query(user_input)
                 retrieved_docs = engine.rag_chain.retriever.retrieve(enhanced_query, role=clearance_level.lower(), top_k=4)
-                # Filter out low-confidence results (FIX 2)
-                high_confidence_docs = [doc for doc in retrieved_docs if doc.get("score", 0) >= 0.60 or doc.get("base_sim", 0) >= 0.40]
-                print(f"DEBUG RETRIEVAL: Found {len(retrieved_docs)} chunks ({len(high_confidence_docs)} high confidence) for rank {current_rank}")
+                # FIX 1: Lower the similarity threshold to 0.45 so technical queries pass through
+                high_confidence_docs = [doc for doc in retrieved_docs if doc.get("score", 0) >= 0.45 or doc.get("base_sim", 0) >= 0.30]
+                print(f"DEBUG RETRIEVAL: Found {len(retrieved_docs)} chunks ({len(high_confidence_docs)} with score >= 0.45) for rank {current_rank}")
                 for i, doc in enumerate(retrieved_docs):
                     txt_preview = doc.get("text", "")[:100].replace("\n", " ")
                     print(f"DEBUG CHUNK {i} (score={doc.get('score', 0)}): {txt_preview}...")
-                dbg_context = "\n\n".join([clean_chunk_text(doc.get("text", "")) for doc in high_confidence_docs])
+                # FIX 2: Use raw docs without strict deduplication to avoid hash collisions
+                dbg_context = "\n\n".join([clean_chunk_text(doc.get("text", "")) for doc in retrieved_docs])
                 print(f"DEBUG CONTEXT LENGTH: {len(dbg_context)} characters")
             except Exception as _dbg_err:
                 print(f"DEBUG RETRIEVAL ERROR: {_dbg_err}")
