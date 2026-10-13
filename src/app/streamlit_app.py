@@ -1379,7 +1379,7 @@ with tab_terminal:
             try:
                 rank_map = {"OPERATOR": 1, "ANALYST": 2, "COMMANDER": 3}
                 current_rank = rank_map.get(st.session_state.clearance_level, clearance_rank)
-                retrieved_docs = engine.rag_chain.retriever.retrieve(user_input, role=clearance_level.lower(), top_k=8)
+                retrieved_docs = engine.rag_chain.retriever.retrieve(user_input, role=clearance_level.lower(), top_k=5)
                 print(f"DEBUG RETRIEVAL: Found {len(retrieved_docs)} chunks for rank {current_rank}")
                 for i, doc in enumerate(retrieved_docs):
                     txt_preview = doc.get("text", "")[:100].replace("\n", " ")

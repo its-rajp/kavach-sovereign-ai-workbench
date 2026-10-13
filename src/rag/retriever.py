@@ -51,7 +51,7 @@ class Retriever:
 
     def retrieve(self, query: str, role: Union[Role, str] = Role.ANALYST, top_k: Optional[int] = None) -> List[Dict[str, Any]]:
         """Retrieve role-authorized chunks for a given query with synonym expansion."""
-        k = top_k or 8
+        k = top_k or 5
         user_rank = get_role_rank(role)
         search_query = self.expand_query(query)
 
@@ -80,7 +80,7 @@ class Retriever:
         Returns:
             (authorized_chunks, is_clearance_blocked, min_required_rank)
         """
-        k = top_k or 8
+        k = top_k or 5
         user_rank = get_role_rank(role)
         search_query = self.expand_query(query)
 

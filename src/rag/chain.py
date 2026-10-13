@@ -7,6 +7,7 @@ Implements SEC-R-03 (Untrusted Document Wrapping) and SEC-O-04 (Anti-Dump Length
 """
 
 import re
+import hashlib
 from typing import List, Dict, Any, Optional, Literal, Union
 from pydantic import BaseModel, Field
 from .retriever import Retriever, get_retriever
@@ -101,6 +102,52 @@ def clean_chunk_text(text: str) -> str:
     return text
 
 
+def deduplicate_chunks(chunks: List[Dict[str, Any]], overlap_threshold: float = 0.70) -> List[Dict[str, Any]]:
+    """Remove duplicate and near-duplicate chunks to prevent Echo Sickness.
+    
+    Uses two-pass dedup:
+    1. Exact hash match (catches identical chunks)
+    2. Fuzzy word-overlap (catches overlapping chunks from chunk_overlap)
+    """
+    if not chunks:
+        return []
+    
+    # Pass 1: Exact content hash dedup
+    seen_hashes = set()
+    hash_unique = []
+    for c in chunks:
+        text = c.get("text", "").strip()
+        content_hash = hashlib.md5(text.encode()).hexdigest()
+        if content_hash not in seen_hashes:
+            seen_hashes.add(content_hash)
+            hash_unique.append(c)
+    
+    # Pass 2: Fuzzy word-overlap dedup (catches near-duplicates from chunk_overlap)
+    final = []
+    for candidate in hash_unique:
+        candidate_words = set(candidate.get("text", "").lower().split())
+        if not candidate_words:
+            continue
+        is_duplicate = False
+        for existing in final:
+            existing_words = set(existing.get("text", "").lower().split())
+            if not existing_words:
+                continue
+            overlap = len(candidate_words & existing_words)
+            smaller_set = min(len(candidate_words), len(existing_words))
+            if smaller_set > 0 and (overlap / smaller_set) > overlap_threshold:
+                is_duplicate = True
+                break
+        if not is_duplicate:
+            final.append(candidate)
+    
+    removed = len(chunks) - len(final)
+    if removed > 0:
+        print(f"🧹 [DEDUP] Removed {removed} duplicate/overlapping chunks ({len(chunks)} → {len(final)})")
+    
+    return final
+
+
 class RAGChain:
     """Orchestrates retrieval and grounded generation."""
 
@@ -155,12 +202,16 @@ class RAGChain:
             print(f"   [{idx+1}] Source: {src} | Page: {pg} | Rank: {rk} | Length: {len(c.get('text', ''))} chars")
             print(f"       Preview: {txt_preview}...")
 
-        # 2. Format Context & Citations (with aggressive text cleaning to prevent raw PDF dumping)
+        # 2. Deduplicate chunks to prevent Echo Sickness (FIX 1)
+        unique_chunks = deduplicate_chunks(chunks)
+
+        # 3. Format Context & Citations (with aggressive text cleaning)
         context_snippets = []
         citations: List[Citation] = []
-        seen_chunks = set()
+        seen_chunk_ids = set()
+        seen_sources = set()
 
-        for c in chunks:
+        for c in unique_chunks:
             meta = c.get("metadata", {})
             source = meta.get("source", "unknown")
             page = meta.get("page", 1)
@@ -172,13 +223,14 @@ class RAGChain:
             if clean_text:
                 context_snippets.append(clean_text)
 
-            if chunk_id not in seen_chunks:
-                seen_chunks.add(chunk_id)
+            if chunk_id not in seen_chunk_ids:
+                seen_chunk_ids.add(chunk_id)
                 citations.append(Citation(
                     source=source,
                     page=page,
                     chunk_id=chunk_id,
                 ))
+                seen_sources.add(source)
 
         context_text = "\n\n".join(context_snippets)
 
@@ -225,9 +277,10 @@ Answer:"""
         if len(raw_answer) > self.settings.max_answer_chars:
             raw_answer = raw_answer[:self.settings.max_answer_chars] + "... [Output truncated to enforce anti-exfiltration limit]"
 
-        # Ensure citations are tagged in text if not present
+        # Ensure citations are tagged in text — use UNIQUE sources only (FIX 2: no duplicate citations)
         if citations and not any(f"[{c.source}" in raw_answer for c in citations):
-            citation_footer = " " + " ".join(f"[Source: {c.source}]" for c in citations)
+            unique_source_names = list(dict.fromkeys(c.source for c in citations))  # preserve order, remove dupes
+            citation_footer = " [Sources: " + ", ".join(unique_source_names) + "]"
             raw_answer = raw_answer.rstrip() + citation_footer
 
         return Answer(

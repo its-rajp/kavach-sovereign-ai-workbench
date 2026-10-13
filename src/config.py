@@ -20,7 +20,7 @@ class Settings(BaseModel):
 
     chunk_size: int = Field(default=800, description="Document chunk size in chars")
     chunk_overlap: int = Field(default=120, description="Chunk overlap in chars")
-    top_k: int = Field(default=8, description="Maximum retrieved chunks per query")
+    top_k: int = Field(default=5, description="Maximum retrieved chunks per query")
     similarity_threshold: float = Field(default=0.20, description="Minimum cosine similarity")
 
     vectorstore_dir: Path = Field(default=Path("data/vectorstore"))
