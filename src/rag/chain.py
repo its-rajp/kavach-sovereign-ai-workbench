@@ -66,20 +66,34 @@ def clean_chunk_text(text: str) -> str:
     """Aggressive context sanitizer: removes all PDF page headers, footers, stamps, and markdown table artifacts."""
     if not text:
         return ""
-    # Remove specific PDF artifacts seen in logs
+    # Remove markdown tables entirely if they break synthesis (FIX 4)
+    text = re.sub(r'\|.*?\|', '', text)
+    text = re.sub(r'\|\s*', ' ', text)
+    text = re.sub(r'^\s*[-=]+\s*$', '', text, flags=re.MULTILINE)
+    # Remove common PDF headers/footers
+    text = re.sub(r'MRPL\s+Technical\s+Manual\s*[•·]\s*Confidential\s*Page\s*\d+\s*of\s*\d+', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'MRPL\s+Classified\s+Incident\s+Report\s*.*?\s*Page\s*\d+\s*of\s*\d+', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'MRPL\s+REFINERY\s+SAFETY\s+OPERATIONS\s+\d+.*?Directorate', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\[?\s*(?:Source:)?\s*[^\]\n]*\.pdf,?\s*Page\s*\d+\s*\]?', '', text, flags=re.IGNORECASE)
     text = re.sub(r'pdf,?\s*Page\s*\d+\]?', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'MRPL Technical Manual • Confidential Page \d+ of \d+', '', text, flags=re.IGNORECASE)
     text = re.sub(r'MRPL_DAILY_SHIFT_LOG_\d+\.pdf', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\|\s*', ' ', text)  # Remove markdown pipes
-    text = re.sub(r'^\s*[-=]+\s*$', '', text, flags=re.MULTILINE)  # Remove separator lines
+    # Remove raw table headers like VALUATION (INR) REMARKS
+    text = re.sub(r'VALUATION\s*\([^)]*\)\s*REMARKS', '', text, flags=re.IGNORECASE)
     # Remove classification stamps like [RESTRICTED // CLR-02 // ANALYST ACCESS]
     text = re.sub(r'\[(?:RESTRICTED|CONFIDENTIAL|INTERNAL|SECRET|PUBLIC|TOP SECRET)\s*//.*?\]', '', text, flags=re.IGNORECASE)
-    # Remove document headers and metadata boilerplate
-    text = re.sub(r'MRPL\s+REFINERY\s+SAFETY\s+OPERATIONS\s+\d+.*?Directorate', '', text, flags=re.IGNORECASE)
+    # Remove headers, technical manual footers, reference numbers
     text = re.sub(r'Ref:\s*MRPL/[A-Z/]+/\d+/\d+', '', text, flags=re.IGNORECASE)
     text = re.sub(r'Classification:\s*\w+\s*/\s*\w+', '', text, flags=re.IGNORECASE)
     text = re.sub(r'Target\s+Facility:\s*MRPL\s+Phase\s+III\s+Complex', '', text, flags=re.IGNORECASE)
+    # Remove section numbering artifacts like "0 PURPOSE", "1.0 SCOPE", "4.2.1"
+    text = re.sub(r'^\s*\d+\.?\d*\.?\d*\s+(PURPOSE|SCOPE|INTRODUCTION|REFERENCES|DEFINITIONS|ABBREVIATIONS)\b', '', text, flags=re.MULTILINE | re.IGNORECASE)
+    # Remove table column header rows (Sr. No., S.No., etc.)
+    text = re.sub(r'\b(?:Sr\.?\s*No\.?|S\.?\s*No\.?)\b', '', text, flags=re.IGNORECASE)
+    # Remove repeated document title headers that leak through
+    text = re.sub(r'MRPL\s+(?:Refinery|Technical|Safety|Classified)[^\n]{0,80}(?:Manual|Report|Operations|Document)', '', text, flags=re.IGNORECASE)
+    # Remove page X of Y references in any form
+    text = re.sub(r'[Pp]age\s+\d+\s+of\s+\d+', '', text)
+    text = re.sub(r'\bPage\s+\d+\b', '', text, flags=re.IGNORECASE)
     # Remove leading brackets or dashes
     text = re.sub(r'^[\]\)\s\-]+', '', text)
     # Collapse whitespace
@@ -177,11 +191,20 @@ class RAGChain:
 Answer the user's question using ONLY the provided context.
 
 CRITICAL RULES:
-1. DO NOT copy-paste raw text, headers, footers, or page numbers from the context.
-2. Synthesize the answer in your own words based on the facts in the context.
-3. If the context contains the answer, state it clearly and concisely.
-4. If the context does NOT contain the answer, say: "I do not have sufficient authorized information."
-5. Append source citation at the end: [Source: Filename].
+1. DO NOT copy-paste raw text, table headers (e.g., 'VALUATION (INR)'), page numbers, or section headings.
+2. SYNTHESIZE the answer. Extract the specific value requested (e.g., temperature, interval, coordinate, capacity) and state it clearly in a professional sentence.
+3. If asked for GPS coordinates, find the sentence containing 'Latitude' and 'Longitude' or 'Incident Coordinates' and quote ONLY those values.
+4. If asked for maintenance intervals, find the specific EOH/hour values and state them clearly (e.g., '8,000 EOH for combustor inspection, 24,000 EOH for HGPE').
+5. If asked for temperatures, find the exact °C value and state it (e.g., '365°C ± 2°C').
+6. If the context does NOT contain the answer, say: "I do not have sufficient authorized information."
+7. Keep your answer under 200 words. Be concise and professional.
+8. Append source citation: [Source: Filename].
+
+FORBIDDEN OUTPUT PATTERNS (never produce these):
+- Raw table column headers like 'Sr. No.', 'VALUATION (INR) REMARKS', 'DESCRIPTION QUANTITY'
+- Page references like 'Page 1 of 12', 'pdf, Page 3'
+- Classification stamps like '[RESTRICTED // CLR-02]'
+- Entire section reproductions or verbatim document text
 
 --- CONTEXT START ---
 {context_text}
