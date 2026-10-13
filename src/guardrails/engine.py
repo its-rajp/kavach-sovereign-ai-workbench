@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from .actions import GuardrailActions
 from ..rag.chain import RAGChain, Answer, Citation, get_rag_chain
 from ..security.audit import AuditRecord, get_audit_logger
+from ..security.alert_dispatcher import dispatch_security_alert, trigger_alert
 from ..security.rbac import Role
 from ..config import get_settings
 
@@ -158,6 +159,7 @@ class GuardrailsEngine:
                     ai_response=answer.text,
                     note="Access blocked: requested information resides in higher clearance tier.",
                 ))
+                trigger_alert(rule_id=rule_id, user_role=role_str, query_snippet=user_msg)
                 return GuardrailsResponse(
                     text=answer.text,
                     verdict="blocked",
@@ -281,6 +283,7 @@ class GuardrailsEngine:
             input_excerpt=self.audit_logger.sanitize_excerpt(user_msg),
             note=note,
         ))
+        trigger_alert(rule_id=rule_id, user_role=role, query_snippet=user_msg)
 
         title, message = REFUSAL_MESSAGES.get(
             rule_id,
